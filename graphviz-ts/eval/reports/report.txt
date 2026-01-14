@@ -1,0 +1,55 @@
+
+╔══════════════════════════════════════════════════════════════════╗
+║              graphviz-ts Evaluation Report                       ║
+╚══════════════════════════════════════════════════════════════════╝
+
+Summary
+────────────────────────────────────────────────────────────────────
+Total Tests:  21
+Passed:       20 (95.2%)
+Failed:       1
+Avg Score:    76.8%
+
+Issues Summary
+────────────────────────────────────────────────────────────────────
+Critical: 0
+Major:    21
+Minor:    3
+Info:     0
+
+Results by Category
+────────────────────────────────────────────────────────────────────
+simple-graphs        9/10 (90%) avg: 79.1%
+styling              3/3 (100%) avg: 73.8%
+labels               2/2 (100%) avg: 72.4%
+shapes               1/1 (100%) avg: 79.1%
+rank-control         3/3 (100%) avg: 70.2%
+special-chars        2/2 (100%) avg: 83.2%
+
+Results by Layout
+────────────────────────────────────────────────────────────────────
+dot                  16/17 (94%) avg: 74.4%
+neato                1/1 (100%) avg: 87.6%
+fdp                  1/1 (100%) avg: 87.4%
+circo                1/1 (100%) avg: 88.5%
+twopi                1/1 (100%) avg: 84.7%
+
+Top Issues
+────────────────────────────────────────────────────────────────────
+[MAJOR] Node count mismatch: expected 2, got 9
+  → Check for duplicate node creation in parser
+[MAJOR] Node count mismatch: expected 4, got 10
+  → Check for duplicate node creation in parser
+[MAJOR] Node count mismatch: expected 10, got 13
+  → Check for duplicate node creation in parser
+[MAJOR] Layout differs significantly from reference
+  → Review layout algorithm parameters and implementation
+[MAJOR] Node count mismatch: expected 4, got 11
+  → Check for duplicate node creation in parser
+
+Recommendations
+────────────────────────────────────────────────────────────────────
+• Multiple layout errors detected. Review layout algorithm parameters.
+
+────────────────────────────────────────────────────────────────────
+Generated: 2026-01-13T23:50:41.226Z

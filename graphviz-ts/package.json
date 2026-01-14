@@ -17,7 +17,11 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "node --test dist/**/*.test.js",
-    "cli": "node dist/cli.js"
+    "cli": "node dist/cli.js",
+    "eval": "npx ts-node eval/src/cli.ts run",
+    "eval:quick": "npx ts-node eval/src/cli.ts quick",
+    "eval:fix": "npx ts-node eval/src/cli.ts fix",
+    "eval:list": "npx ts-node eval/src/cli.ts list"
   },
   "keywords": [
     "graphviz",
@@ -32,6 +36,7 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^25.0.8",
+    "ts-node": "^10.9.2",
     "typescript": "^5.3.0"
   },
   "engines": {
