@@ -14,7 +14,7 @@ Issues Summary
 ────────────────────────────────────────────────────────────────────
 Critical: 0
 Major:    21
-Minor:    3
+Minor:    4
 Info:     0
 
 Results by Category
@@ -30,7 +30,7 @@ Results by Layout
 ────────────────────────────────────────────────────────────────────
 dot                  16/17 (94%) avg: 74.4%
 neato                1/1 (100%) avg: 87.6%
-fdp                  1/1 (100%) avg: 87.4%
+fdp                  1/1 (100%) avg: 86.7%
 circo                1/1 (100%) avg: 88.5%
 twopi                1/1 (100%) avg: 84.7%
 
@@ -52,4 +52,4 @@ Recommendations
 • Multiple layout errors detected. Review layout algorithm parameters.
 
 ────────────────────────────────────────────────────────────────────
-Generated: 2026-01-13T23:50:41.226Z
+Generated: 2026-01-14T18:42:48.394Z
