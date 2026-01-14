@@ -1,0 +1,104 @@
+name: graphviz-ts Evaluation
+
+on:
+  push:
+    branches: [main, master, 'claude/**']
+    paths:
+      - 'graphviz-ts/**'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'graphviz-ts/**'
+  workflow_dispatch:
+    inputs:
+      eval_mode:
+        description: 'Evaluation mode'
+        required: false
+        default: 'quick'
+        type: choice
+        options:
+          - quick
+          - full
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: graphviz-ts
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: graphviz-ts/package-lock.json
+
+      - name: Install Graphviz
+        run: sudo apt-get update && sudo apt-get install -y graphviz
+
+      - name: Verify Graphviz
+        run: dot -V
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run evaluation
+        id: eval
+        run: |
+          MODE="${{ github.event.inputs.eval_mode || 'quick' }}"
+          npm run eval:${MODE} -- --ci --output ./eval-results
+        continue-on-error: true
+
+      - name: Upload evaluation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evaluation-report
+          path: |
+            graphviz-ts/eval-results/report.html
+            graphviz-ts/eval-results/report.json
+            graphviz-ts/eval-results/report.txt
+          retention-days: 30
+
+      - name: Post evaluation summary
+        if: always()
+        run: |
+          if [ -f eval-results/report.json ]; then
+            echo "## Evaluation Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            TOTAL=$(jq '.totalTests' eval-results/report.json)
+            PASSED=$(jq '.passed' eval-results/report.json)
+            FAILED=$(jq '.failed' eval-results/report.json)
+            RATE=$(jq '.passRate' eval-results/report.json)
+            AVG=$(jq '.aggregateMetrics.avgOverallScore' eval-results/report.json)
+
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Total Tests | $TOTAL |" >> $GITHUB_STEP_SUMMARY
+            echo "| Passed | $PASSED |" >> $GITHUB_STEP_SUMMARY
+            echo "| Failed | $FAILED |" >> $GITHUB_STEP_SUMMARY
+            echo "| Pass Rate | ${RATE}% |" >> $GITHUB_STEP_SUMMARY
+            echo "| Avg Score | ${AVG}% |" >> $GITHUB_STEP_SUMMARY
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            if [ "$FAILED" -gt 0 ]; then
+              echo "### Top Issues" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              jq -r '.issuesSummary.topIssues[:5][] | "- **\(.severity)**: \(.description)"' eval-results/report.json >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+
+      - name: Check evaluation passed
+        if: steps.eval.outcome == 'failure'
+        run: |
+          echo "Evaluation found issues. Check the artifact for details."
+          exit 1

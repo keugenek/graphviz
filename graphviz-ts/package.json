@@ -20,8 +20,11 @@
     "cli": "node dist/cli.js",
     "eval": "npx ts-node eval/src/cli.ts run",
     "eval:quick": "npx ts-node eval/src/cli.ts quick",
+    "eval:full": "npx ts-node eval/src/cli.ts run",
     "eval:fix": "npx ts-node eval/src/cli.ts fix",
-    "eval:list": "npx ts-node eval/src/cli.ts list"
+    "eval:list": "npx ts-node eval/src/cli.ts list",
+    "eval:ci": "npx ts-node eval/src/cli.ts quick --ci",
+    "ci": "npm run build && npm run eval:ci"
   },
   "keywords": [
     "graphviz",

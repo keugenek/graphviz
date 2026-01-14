@@ -6,14 +6,21 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { generateTestCases, getTestsByCategory, getTestsByLayout, getTestsByDifficulty } from './test-generator';
+import { generateTestCases } from './test-generator';
 import { runAllTests, isGraphvizAvailable, getGraphvizVersion } from './runner';
 import { compareAll } from './comparator';
-import { generateReport, generateTextReport, generateHtmlReport, saveReports } from './report-generator';
-import { generateBatchFixPrompt, createInteractivePrompt, runFixPipeline, saveFixRequest } from './fix-pipeline';
-import { TestCase, TestCategory, LayoutEngine, EvaluationReport } from './types';
+import { generateReport, generateTextReport, saveReports } from './report-generator';
+import { createInteractivePrompt, runFixPipeline, saveFixRequest } from './fix-pipeline';
+import { TestCase, EvaluationReport } from './types';
 
 const REPORTS_DIR = path.join(__dirname, '..', 'reports');
+
+// CI Configuration
+const CI_DEFAULTS = {
+  passThreshold: 80, // Minimum pass rate % to succeed
+  scoreThreshold: 60, // Minimum avg score to succeed
+  failOnCritical: true, // Fail if any critical issues
+};
 
 /**
  * Parse command line arguments
@@ -60,19 +67,28 @@ Commands:
   list             List available test cases
 
 Options:
-  --category <cat> Filter by category (e.g., simple-graphs, styling)
-  --layout <eng>   Filter by layout engine (dot, neato, fdp, circo, twopi)
-  --difficulty <d> Filter by difficulty (basic, intermediate, advanced)
-  --output <dir>   Output directory for reports (default: eval/reports)
-  --json           Output JSON only
-  --quiet          Minimal output
+  --category <cat>    Filter by category (e.g., simple-graphs, styling)
+  --layout <eng>      Filter by layout engine (dot, neato, fdp, circo, twopi)
+  --difficulty <d>    Filter by difficulty (basic, intermediate, advanced)
+  --output <dir>      Output directory for reports (default: eval/reports)
+  --json              Output JSON only
+  --quiet             Minimal output
+  --ci                CI mode: exit with code 1 if thresholds not met
+  --pass-threshold    Minimum pass rate % for CI (default: ${CI_DEFAULTS.passThreshold})
+  --score-threshold   Minimum avg score % for CI (default: ${CI_DEFAULTS.scoreThreshold})
 
 Examples:
   npx ts-node eval/src/cli.ts run
   npx ts-node eval/src/cli.ts run --category simple-graphs
-  npx ts-node eval/src/cli.ts run --layout dot --difficulty basic
+  npx ts-node eval/src/cli.ts run --ci --pass-threshold 90
+  npx ts-node eval/src/cli.ts quick --ci
   npx ts-node eval/src/cli.ts fix
-  npx ts-node eval/src/cli.ts list
+
+CI Mode:
+  In CI mode, the tool exits with code 1 if:
+  - Pass rate is below the threshold (default: ${CI_DEFAULTS.passThreshold}%)
+  - Average score is below the threshold (default: ${CI_DEFAULTS.scoreThreshold}%)
+  - Any critical issues are found
 
 Environment:
   Graphviz: ${isGraphvizAvailable() ? `v${getGraphvizVersion()}` : 'NOT INSTALLED'}
@@ -80,7 +96,7 @@ Environment:
 }
 
 /**
- * Progress indicator
+ * Progress indicator for TTY
  */
 function showProgress(completed: number, total: number, current: TestCase): void {
   const percent = Math.round((completed / total) * 100);
@@ -89,10 +105,73 @@ function showProgress(completed: number, total: number, current: TestCase): void
 }
 
 /**
+ * CI-friendly progress (no carriage returns)
+ */
+function showCiProgress(completed: number, total: number, current: TestCase): void {
+  // Only show progress at intervals in CI
+  const interval = Math.max(1, Math.floor(total / 10));
+  if (completed % interval === 0 || completed === total - 1) {
+    const percent = Math.round((completed / total) * 100);
+    console.log(`[${percent}%] Running: ${current.name}`);
+  }
+}
+
+/**
+ * Check if running in CI environment
+ */
+function isCI(): boolean {
+  return !!(
+    process.env.CI ||
+    process.env.GITHUB_ACTIONS ||
+    process.env.GITLAB_CI ||
+    process.env.CIRCLECI ||
+    process.env.JENKINS_URL ||
+    process.env.TRAVIS
+  );
+}
+
+/**
+ * Evaluate CI result and return exit code
+ */
+function evaluateCiResult(
+  report: EvaluationReport,
+  options: Record<string, string | boolean>
+): { passed: boolean; reasons: string[] } {
+  const passThreshold = parseFloat(options['pass-threshold'] as string) || CI_DEFAULTS.passThreshold;
+  const scoreThreshold = parseFloat(options['score-threshold'] as string) || CI_DEFAULTS.scoreThreshold;
+  const reasons: string[] = [];
+
+  // Check pass rate
+  if (report.passRate < passThreshold) {
+    reasons.push(`Pass rate ${report.passRate.toFixed(1)}% below threshold ${passThreshold}%`);
+  }
+
+  // Check average score
+  if (report.aggregateMetrics.avgOverallScore < scoreThreshold) {
+    reasons.push(`Avg score ${report.aggregateMetrics.avgOverallScore.toFixed(1)}% below threshold ${scoreThreshold}%`);
+  }
+
+  // Check for critical issues
+  if (CI_DEFAULTS.failOnCritical && report.issuesSummary.bySeverity.critical > 0) {
+    reasons.push(`Found ${report.issuesSummary.bySeverity.critical} critical issue(s)`);
+  }
+
+  return {
+    passed: reasons.length === 0,
+    reasons,
+  };
+}
+
+/**
  * Run evaluation
  */
 async function runEvaluation(options: Record<string, string | boolean>): Promise<EvaluationReport> {
-  console.log('\n🔍 graphviz-ts Evaluation\n');
+  const isCiMode = options.ci || isCI();
+  const isQuiet = options.quiet || (isCiMode && !options.verbose);
+
+  if (!isQuiet) {
+    console.log('\n🔍 graphviz-ts Evaluation\n');
+  }
 
   // Check Graphviz availability
   if (!isGraphvizAvailable()) {
@@ -101,7 +180,9 @@ async function runEvaluation(options: Record<string, string | boolean>): Promise
     process.exit(1);
   }
 
-  console.log(`✓ Graphviz v${getGraphvizVersion()} detected\n`);
+  if (!isQuiet) {
+    console.log(`✓ Graphviz v${getGraphvizVersion()} detected\n`);
+  }
 
   // Get test cases
   let testCases = generateTestCases();
@@ -109,31 +190,36 @@ async function runEvaluation(options: Record<string, string | boolean>): Promise
   // Apply filters
   if (options.category) {
     testCases = testCases.filter((t) => t.category === options.category);
-    console.log(`Filtering by category: ${options.category}`);
+    if (!isQuiet) console.log(`Filtering by category: ${options.category}`);
   }
 
   if (options.layout) {
     testCases = testCases.filter((t) => t.layout === options.layout);
-    console.log(`Filtering by layout: ${options.layout}`);
+    if (!isQuiet) console.log(`Filtering by layout: ${options.layout}`);
   }
 
   if (options.difficulty) {
     testCases = testCases.filter((t) => t.difficulty === options.difficulty);
-    console.log(`Filtering by difficulty: ${options.difficulty}`);
+    if (!isQuiet) console.log(`Filtering by difficulty: ${options.difficulty}`);
   }
 
-  console.log(`Running ${testCases.length} test cases...\n`);
+  if (!isQuiet) {
+    console.log(`Running ${testCases.length} test cases...\n`);
+  }
+
+  // Determine progress callback
+  let progressFn: ((completed: number, total: number, current: TestCase) => void) | undefined;
+  if (!isQuiet) {
+    progressFn = isCiMode ? showCiProgress : (process.stdout.isTTY ? showProgress : showCiProgress);
+  }
 
   // Run tests
   const startTime = Date.now();
-  const results = await runAllTests(
-    testCases,
-    30000,
-    options.quiet ? undefined : showProgress
-  );
+  const results = await runAllTests(testCases, 30000, progressFn);
   const duration = Date.now() - startTime;
 
-  if (!options.quiet) {
+  // Clear progress line for TTY
+  if (!isQuiet && !isCiMode && process.stdout.isTTY) {
     process.stdout.write('\r' + ' '.repeat(70) + '\r');
   }
 
@@ -146,7 +232,7 @@ async function runEvaluation(options: Record<string, string | boolean>): Promise
   // Output
   if (options.json) {
     console.log(JSON.stringify(report, null, 2));
-  } else {
+  } else if (!isQuiet) {
     console.log(generateTextReport(report));
     console.log(`\n⏱  Completed in ${(duration / 1000).toFixed(1)}s`);
   }
@@ -155,10 +241,27 @@ async function runEvaluation(options: Record<string, string | boolean>): Promise
   const outputDir = (options.output as string) || REPORTS_DIR;
   saveReports(report, outputDir);
 
-  console.log(`\n📊 Reports saved to ${outputDir}/`);
-  console.log(`   - report.html (visual comparison)`);
-  console.log(`   - report.json (full data)`);
-  console.log(`   - report.txt (text summary)`);
+  if (!isQuiet) {
+    console.log(`\n📊 Reports saved to ${outputDir}/`);
+    console.log(`   - report.html (visual comparison)`);
+    console.log(`   - report.json (full data)`);
+    console.log(`   - report.txt (text summary)`);
+  }
+
+  // CI mode exit code handling
+  if (isCiMode) {
+    const ciResult = evaluateCiResult(report, options);
+
+    if (!ciResult.passed) {
+      console.log('\n❌ CI Check Failed:');
+      for (const reason of ciResult.reasons) {
+        console.log(`   - ${reason}`);
+      }
+      process.exit(1);
+    } else {
+      console.log(`\n✅ CI Check Passed (${report.passRate.toFixed(1)}% pass rate, ${report.aggregateMetrics.avgOverallScore.toFixed(1)}% avg score)`);
+    }
+  }
 
   return report;
 }
@@ -177,8 +280,10 @@ async function runQuickEvaluation(options: Record<string, string | boolean>): Pr
 async function generateFixes(options: Record<string, string | boolean>): Promise<void> {
   console.log('\n🔧 Generating Fix Prompts\n');
 
-  // Load last report
-  const reportPath = path.join(REPORTS_DIR, 'report.json');
+  // Load last report or run evaluation
+  const outputDir = (options.output as string) || REPORTS_DIR;
+  const reportPath = path.join(outputDir, 'report.json');
+
   if (!fs.existsSync(reportPath)) {
     console.log('No evaluation report found. Running evaluation first...\n');
     await runEvaluation(options);
@@ -194,7 +299,7 @@ async function generateFixes(options: Record<string, string | boolean>): Promise
   console.log(`Found ${report.failed} failing test(s)\n`);
 
   // Generate fix pipeline
-  const { requests, script } = await runFixPipeline(report);
+  const { requests } = await runFixPipeline(report);
 
   console.log(`Generated ${requests.length} fix request(s):\n`);
   for (const req of requests) {
@@ -205,7 +310,7 @@ async function generateFixes(options: Record<string, string | boolean>): Promise
   const interactivePrompt = createInteractivePrompt(report);
   const interactivePath = saveFixRequest(interactivePrompt, 'fix-interactive.md');
 
-  console.log(`\n📝 Fix files saved to ${REPORTS_DIR}/`);
+  console.log(`\n📝 Fix files saved to ${outputDir}/`);
   console.log(`
 To fix issues with Claude Code:
 
@@ -235,6 +340,11 @@ function listTestCases(options: Record<string, string | boolean>): void {
   }
   if (options.difficulty) {
     testCases = testCases.filter((t) => t.difficulty === options.difficulty);
+  }
+
+  if (options.json) {
+    console.log(JSON.stringify(testCases, null, 2));
+    return;
   }
 
   console.log(`\nAvailable Test Cases (${testCases.length}):\n`);
@@ -291,15 +401,22 @@ async function main(): Promise<void> {
         listTestCases(options);
         break;
 
-      case 'report':
-        const reportPath = path.join(REPORTS_DIR, 'report.json');
+      case 'report': {
+        const outputDir = (options.output as string) || REPORTS_DIR;
+        const reportPath = path.join(outputDir, 'report.json');
         if (fs.existsSync(reportPath)) {
           const report = JSON.parse(fs.readFileSync(reportPath, 'utf-8'));
-          console.log(generateTextReport(report));
+          if (options.json) {
+            console.log(JSON.stringify(report, null, 2));
+          } else {
+            console.log(generateTextReport(report));
+          }
         } else {
           console.log('No report found. Run evaluation first: npx ts-node eval/src/cli.ts run');
+          process.exit(1);
         }
         break;
+      }
 
       default:
         console.log(`Unknown command: ${command}`);
@@ -316,4 +433,7 @@ async function main(): Promise<void> {
 }
 
 // Run
-main().catch(console.error);
+main().catch((error) => {
+  console.error('Fatal error:', error);
+  process.exit(1);
+});
